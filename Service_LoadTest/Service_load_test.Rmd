@@ -1,0 +1,115 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+In order to evaluate the performance of the o2r reproducibility service this document contains some script to reproduce a load test consisting in three scenarios: ERC creation, ERC examination and a combined scenario. The document consist in four sections corresponding to different activities required to simulate those scenaries: Service Authentication, Compendium Upload/submission, publication (candidate process) and execution. Each section contains the functions required to test the o2r service both in a `local` implementation and in the `remote` [o2r.uni-muenster.de](o2r.uni-muenster.de) webpage.
+
+## Required libraries
+
+```{r}
+library(RSelenium)
+library(binman)
+library(loadtest)
+library(httr)
+library(rjson)
+library(stringr)
+```
+
+# Service Authentication
+
+## Remote service
+
+In case of a remote service [o2r.uni-muenster.de](http://o2r.uni-muenster.de) this chunck access to the demo webpage and find the cookie `connec.sid` after a succesfull login. It is required a  `.Renviron` file on your local machine next to this file defining USERNAME and PASSWORD variables corresponding to the login information of [orcid](orcidorcid.org) **personal account**.
+
+```{r getCookieRemote}
+
+#Function to assign in the local environment the Cookie 'connec.sid' and the endpoint corresponding to the type of test (local or remote)
+
+getCookieRemote<-function(){
+  
+  #Remote Test
+  o2rRemote<-"https://o2r.uni-muenster.de/#/"
+  
+  # Read startup file  / login information
+  readRenviron(".Renviron")
+
+  available.versions<-list_versions("chromedriver")
+  r<-rsDriver(chromever=available.versions[[1]][1])
+  remDr<-r[["client"]]  
+  
+  # o2r webpage
+  remDr$navigate(o2Remote)
+  webElem<-remDr$findElement(using = "xpath", "//a[@href='api/v1/auth/login']")
+  webElem$clickElement()
+  Sys.sleep(1)
+  # orcid.org login webpage - Personal login
+  
+  webElemUsername<-remDr$findElement(using="id",value='userId')
+  Sys.sleep(1)
+  webElemPass<-remDr$findElement(using="id",value='password')
+  Sys.sleep(1)
+  webElemUsername$sendKeysToElement(list(Sys.getenv("USERNAME")))
+  Sys.sleep(1)
+  webElemPass$sendKeysToElement(list(Sys.getenv("PASSWORD"),key="enter"))
+  Sys.sleep(1)
+  
+  # Get cookie
+  cookie<-URLdecode(remDr$getAllCookies()[[1]]$value)
+  Sys.sleep(1)
+  Sys.setenv(COOKIE=cookie)
+  Sys.setenv(ENDPOINT="https://o2r.uni-muenster.de/api/v1/")
+  print(cookie)
+  #Close
+  remDr$close()
+  rm(r)
+}
+```
+
+## Local service 
+
+The following code chunk retrieves the cookie `connec.sid`from the local reference implementation, which is exposed via [o2r-guestlister]().This is a "security hole" which of course does not work when uploading workspaces to a remote reference implementation deployment. It is required a  `.Renviron` file on your local machine next to this file defining `IP` corresponding to the o2r ip address of your Docker environment. To find the ip you have to use the `$docker-machine ip` command.
+
+```{r getCookieLocal}
+
+getCookieLocal<-function(){
+  
+  #LocalTest
+  o2rlocal<-Sys.getenv("IP")
+  available.versions<-list_versions("chromedriver")
+  r<-rsDriver(port=1234L,chromever=available.versions[[1]][1])
+  remDr<-r[["client"]]  
+  
+  #### with localhost working
+  
+  #o2r webpage
+  
+  remDr$navigate(o2rlocal)
+  
+  webElem<-remDr$findElement(using = "xpath","//a[@href='api/v1/auth/login']")
+  webElem$clickElement()
+  Sys.sleep(1)
+  
+  # o2r Admin/ Editor / User
+  
+  webElem$findElement(using="xpath","/html/body/div/div[2]/form[3]/button")
+  webElem$clickElement()
+  
+  # Get cookie
+  cookie<-URLdecode(webElem$getAllCookies()[[1]]$value)
+  Sys.sleep(1)
+  Sys.setenv(COOKIE=cookie)
+  Sys.setenv(ENDPOINT="https://o2r.uni-muenster.de/api/v1/")
+  
+  #Close
+  remDr$close()
+  rm(r)
+}
+```
+
+# Compendium Upload / Submission
+
+The test differentiates between two types of uploads (either workspace or a complete ERC) and 3 origins (Direct, Zenodo and Sciebo). The following 3 functions (one for each origin) upload the workspaces and the complete ERC for either a `localtest` or a `remotetest`. The function requires a previous Service authentication to define `ENDPOINT` and `COOKIE`.
+
+
+
